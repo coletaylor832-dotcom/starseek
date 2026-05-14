@@ -1,3 +1,4 @@
+<img width="1402" height="1122" alt="starseekexample" src="https://github.com/user-attachments/assets/7cac6ea0-8a51-4530-80a3-80362a4ca290" />
 # starseek
 a terminal app to pull dynamic projections of the stars above you for night time.
 
