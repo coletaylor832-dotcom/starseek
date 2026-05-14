@@ -1,0 +1,106 @@
+import numpy as np
+import time
+import os
+import sys
+from skyfield.api import Star, load, wgs84
+from skyfield.data import mpc
+from datetime import datetime
+
+# ── Config ────────────────────────────────────────────────────────────────────
+LAT, LON   = 40.7128, -74.0060   # NYC — change to your location
+MAG_LIMIT  = 5.0                  # Max magnitude (higher = more stars)
+REFRESH    = 5                    # Seconds between updates
+WIDTH      = 80                   # Terminal width  (fallback)
+HEIGHT     = 40                   # Terminal height (fallback)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_terminal_size():
+    """Use actual terminal dimensions if available."""
+    try:
+        size = os.get_terminal_size()
+        return size.columns, size.lines - 4  # leave room for header/footer
+    except OSError:
+        return WIDTH, HEIGHT
+
+def build_frame(location, ts, bright_stars, bright_stars_df):
+    """Calculate current star positions and render a frame."""
+    t = ts.now()
+    width, height = get_terminal_size()
+
+    astrometric = location.at(t).observe(bright_stars)
+    alt, az, _  = astrometric.apparent().altaz()
+
+    grid = [[' ' for _ in range(width)] for _ in range(height)]
+
+    for i in range(len(alt.degrees)):
+        if alt.degrees[i] > 0:
+            r     = (90 - alt.degrees[i]) / 90   # normalize to 0–1
+            theta = np.radians(az.degrees[i])
+
+            x = int(width  / 2 + r * (width  / 2 - 1) * np.sin(theta))
+            y = int(height / 2 - r * (height / 2 - 1) * np.cos(theta))
+
+            mag = bright_stars_df.iloc[i]['magnitude']
+            # Brightness tiers: brightest → dimmest
+            if   mag < 0:   char = '✦'
+            elif mag < 1.5: char = '*'
+            elif mag < 3.0: char = '+'
+            else:           char = '·'
+
+            if 0 <= x < width and 0 <= y < height:
+                grid[y][x] = char
+
+    return grid, t, width, height
+
+def render(grid, t, width, height, frame):
+    """Overwrite the terminal in-place — no flicker."""
+    now_str = datetime.now().strftime('%Y-%m-%d  %H:%M:%S')
+    header  = f"  ✶ STARSEEK — Night Sky  |  {now_str}  |  refresh #{frame}"
+
+    lines = []
+    lines.append('─' * width)
+    lines.append(header[:width])
+    lines.append('─' * width)
+    for row in grid:
+        lines.append(''.join(row))
+    lines.append('─' * width)
+    lines.append(f"  [Ctrl+C to exit]   lat={LAT}  lon={LON}   mag<={MAG_LIMIT}   every {REFRESH}s")
+
+    # Jump cursor to top-left and overwrite — avoids screen flash
+    sys.stdout.write('\033[H')
+    sys.stdout.write('\n'.join(lines))
+    sys.stdout.flush()
+
+def main():
+    print("Loading star catalogue…")
+    from skyfield.data import hipparcos
+    with load.open(hipparcos.URL) as f:
+        df = hipparcos.load_dataframe(f)
+    ts       = load.timescale()
+    planets  = load('de421.bsp')
+    earth    = planets['earth']
+    location = earth + wgs84.latlon(LAT, LON)
+
+    bright_stars_df = df[df['magnitude'] <= MAG_LIMIT]
+    bright_stars    = Star.from_dataframe(bright_stars_df)
+
+    # Hide cursor + clear screen before loop
+    sys.stdout.write('\033[?25l')
+    sys.stdout.write('\033[2J')
+    sys.stdout.flush()
+
+    frame = 1
+    try:
+        while True:
+            grid, t, width, height = build_frame(location, ts, bright_stars, bright_stars_df)
+            render(grid, t, width, height, frame)
+            frame += 1
+            time.sleep(REFRESH)
+    except KeyboardInterrupt:
+        # Restore cursor and exit cleanly
+        sys.stdout.write('\033[?25h')
+        sys.stdout.write('\033[2J\033[H')
+        print("Starseek closed. Clear skies! 🌙")
+
+if __name__ == '__main__':
+    main()
